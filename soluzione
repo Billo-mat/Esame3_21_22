@@ -1,0 +1,112 @@
+import pandas as pd
+
+# Carichiamo il file trattando tutto come stringa per evitare interpretazioni errate iniziali
+df = pd.read_csv('Howell1.csv', sep=';', dtype=str)
+
+# Sostituiamo la virgola con il punto in tutte le colonne e convertiamo in float
+for col in df.columns:
+    df[col] = df[col].str.replace(',', '.').astype(float)
+
+# Verifica: il dtype deve essere float64 per tutte le colonne
+print(df.info())
+print(df.head())
+
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(8, 5))
+df['age'].hist(bins=20, edgecolor='black', color='skyblue')
+plt.title('Distribuzione dell\'Età')
+plt.xlabel('Età (anni)')
+plt.ylabel('Frequenza')
+plt.show()
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+# Filtri per genere
+males = df[df['male'] == 1]
+females = df[df['male'] == 0]
+
+# Primo plot: Contrasto generale maschi/femmine
+ax1.hist(males['age'], bins=15, density=True, alpha=0.5, label='Male', color='blue')
+ax1.hist(females['age'], bins=15, density=True, alpha=0.5, label='Female', color='red')
+ax1.set_title('Age Distribution by Gender')
+ax1.legend()
+
+# Secondo plot: Contrasto per persone più alte di 1.2m (120 cm)
+taller_m = males[males['height'] > 120]
+taller_f = females[females['height'] > 120]
+
+ax2.hist(taller_m['age'], bins=15, density=True, alpha=0.5, label='Male (>1.2m)', color='blue')
+ax2.hist(taller_f['age'], bins=15, density=True, alpha=0.5, label='Female (>1.2m)', color='red')
+ax2.set_title('Age Distribution by Gender (Height > 1.2m)')
+ax2.legend()
+
+plt.tight_layout()
+plt.show()
+
+df['w_dens'] = df['weight'] / df['height']
+
+plt.figure(figsize=(10, 6))
+
+# Maschi in blu, femmine in rosso
+plt.scatter(df[df['male'] == 1]['age'], df[df['male'] == 1]['w_dens'], 
+            color='blue', label='Male', alpha=0.5, s=15)
+plt.scatter(df[df['male'] == 0]['age'], df[df['male'] == 0]['w_dens'], 
+            color='red', label='Female', alpha=0.5, s=15)
+
+plt.title('Weight/Height Density vs Age')
+plt.xlabel('Age')
+plt.ylabel('W_Dens (Weight/Height)')
+plt.legend()
+plt.show()
+
+
+def w_dens_by_gender(age: float, is_male: bool) -> float:
+    """
+    Returns expected weight density based on age and gender.
+
+    >>> w_dens_by_gender(15, True)
+    0.15
+    >>> w_dens_by_gender(35, True)
+    0.3
+    >>> w_dens_by_gender(10, False)
+    0.09090909090909091
+    """
+    if is_male:
+        return age / 100 if age <= 30 else 0.30
+    else:
+        return age / 110 if age <= 25 else 0.23
+
+if __name__ == "__main__":
+    import doctest
+    doctest.testmod()
+
+import numpy as np
+
+# np.vectorize è un modo efficiente per applicare funzioni a colonne pandas
+v_w_dens = np.vectorize(w_dens_by_gender)
+
+df['expected_w_dens'] = v_w_dens(df['age'], df['male'].astype(bool))
+
+
+import pymc as pm
+import arviz as az
+
+# Calcoliamo l'errore osservato
+error_data = (df['expected_w_dens'] - df['w_dens']).values
+
+with pm.Model() as model:
+    # Prior per la media dell'errore
+    mu = pm.Normal('mu', mu=0, sigma=5)
+    
+    # Prior per la deviazione standard dell'errore
+    sigma = pm.Exponential('sigma', lam=1)
+    
+    # Likelihood
+    obs = pm.Normal('obs', mu=mu, sigma=sigma, observed=error_data)
+    
+    # Campionamento
+    trace = pm.sample(1000, tune=1000, return_inferencedata=True)
+
+# Summary dei risultati
+print(az.summary(trace))
